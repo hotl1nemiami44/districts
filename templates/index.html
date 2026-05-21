@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Оценка районов</title>
+</head>
+<body>
+    <h1>Карта районов (Здесь фронтендер подключит Leaflet или Yandex Maps)</h1>
+    <button onclick="loadDistricts()">Загрузить районы Москвы</button>
+    <pre id="data-container" style="background: #f4f4f4; padding: 10px;"></pre>
+
+    <script>
+        // Этот скрипт пишет фронтендер
+        async function loadDistricts() {
+            try {
+                // Обращаемся к API бэкенда
+                const response = await fetch('/api/districts/Moscow');
+                const data = await response.json();
+
+                // Выводим данные на экран (потом фронтендер будет рисовать по ним карту)
+                document.getElementById('data-container').textContent = JSON.stringify(data, null, 2);
+            } catch (error) {
+                console.error("Ошибка загрузки:", error);
+            }
+        }
+    </script>
+</body>
+</html>
