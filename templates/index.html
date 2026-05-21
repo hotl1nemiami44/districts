@@ -3,26 +3,260 @@
 <head>
     <meta charset="UTF-8">
     <title>Оценка районов</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: #1f2937; }
+        header {
+            padding: 14px 20px;
+            background: #0f172a;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+        header label { font-size: 14px; opacity: 0.85; }
+        header select {
+            padding: 6px 10px;
+            border-radius: 6px;
+            border: 1px solid #334155;
+            background: #1e293b;
+            color: #fff;
+            font-size: 14px;
+        }
+        #map { height: calc(100vh - 58px); width: 100%; }
+
+        .legend {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 10px 12px;
+            border-radius: 8px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+            font-size: 12px;
+            line-height: 1.4;
+        }
+        .legend-title { font-weight: 600; margin-bottom: 6px; }
+        .legend-gradient {
+            width: 180px;
+            height: 12px;
+            border-radius: 4px;
+            background: linear-gradient(to right, #d73027, #fc8d59, #fee08b, #d9ef8b, #91cf60, #1a9850);
+            margin-bottom: 4px;
+        }
+        .legend-scale { display: flex; justify-content: space-between; font-size: 11px; color: #475569; }
+
+        .district-tooltip {
+            font-family: inherit;
+            padding: 4px 2px;
+        }
+        .district-tooltip .name {
+            font-weight: 700;
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+        .district-tooltip .total {
+            font-size: 13px;
+            margin-bottom: 6px;
+            color: #334155;
+        }
+        .district-tooltip .total b { font-size: 16px; }
+        .district-tooltip table {
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        .district-tooltip td {
+            padding: 2px 8px 2px 0;
+        }
+        .district-tooltip td.score {
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+            font-weight: 600;
+        }
+        .status {
+            position: absolute;
+            top: 70px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #fff;
+            padding: 8px 14px;
+            border-radius: 6px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+            font-size: 13px;
+            display: none;
+            z-index: 1000;
+        }
+    </style>
 </head>
 <body>
-    <h1>Карта районов (Здесь фронтендер подключит Leaflet или Yandex Maps)</h1>
-    <button onclick="loadDistricts()">Загрузить районы Москвы</button>
-    <pre id="data-container" style="background: #f4f4f4; padding: 10px;"></pre>
+    <header>
+        <h1>Оценка районов</h1>
+        <label for="city-select">Город:</label>
+        <select id="city-select"></select>
+    </header>
+    <div id="status" class="status"></div>
+    <div id="map"></div>
 
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
     <script>
-        // Этот скрипт пишет фронтендер
-        async function loadDistricts() {
-            try {
-                // Обращаемся к API бэкенда
-                const response = await fetch('/api/districts/Moscow');
-                const data = await response.json();
+        const CRITERIA_LABELS = {
+            transport: "Транспорт",
+            education: "Образование",
+            healthcare: "Здравоохранение",
+            ecology: "Экология",
+            safety: "Безопасность",
+            shopping: "Магазины",
+            leisure: "Досуг",
+            amenities: "Инфраструктура",
+            noise: "Тишина",
+            density: "Плотность"
+        };
 
-                // Выводим данные на экран (потом фронтендер будет рисовать по ним карту)
-                document.getElementById('data-container').textContent = JSON.stringify(data, null, 2);
-            } catch (error) {
-                console.error("Ошибка загрузки:", error);
+        const CITY_VIEWS = {
+            "Moscow": { center: [55.751, 37.618], zoom: 10 },
+            "Saint-Petersburg": { center: [59.94, 30.34], zoom: 10 }
+        };
+
+        const map = L.map('map').setView([55.751, 37.618], 10);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 18,
+            attribution: '© OpenStreetMap'
+        }).addTo(map);
+
+        // Легенда
+        const legend = L.control({ position: 'bottomright' });
+        legend.onAdd = function () {
+            const div = L.DomUtil.create('div', 'legend');
+            div.innerHTML = `
+                <div class="legend-title">Балл района</div>
+                <div class="legend-gradient"></div>
+                <div class="legend-scale"><span>1</span><span>50</span><span>100</span></div>
+            `;
+            return div;
+        };
+        legend.addTo(map);
+
+        let currentLayer = null;
+        const statusEl = document.getElementById('status');
+
+        function showStatus(text) {
+            statusEl.textContent = text;
+            statusEl.style.display = 'block';
+        }
+        function hideStatus() { statusEl.style.display = 'none'; }
+
+        // Цвет по баллу 1–100: красный → жёлтый → зелёный
+        function scoreColor(score) {
+            const stops = [
+                { s:   1, c: [215, 48, 39]  },
+                { s:  25, c: [252, 141, 89] },
+                { s:  45, c: [254, 224, 139]},
+                { s:  60, c: [217, 239, 139]},
+                { s:  80, c: [145, 207, 96] },
+                { s: 100, c: [26, 152, 80]  }
+            ];
+            const clamped = Math.max(1, Math.min(100, score));
+            for (let i = 0; i < stops.length - 1; i++) {
+                const a = stops[i], b = stops[i + 1];
+                if (clamped >= a.s && clamped <= b.s) {
+                    const t = (clamped - a.s) / (b.s - a.s);
+                    const r = Math.round(a.c[0] + (b.c[0] - a.c[0]) * t);
+                    const g = Math.round(a.c[1] + (b.c[1] - a.c[1]) * t);
+                    const bl = Math.round(a.c[2] + (b.c[2] - a.c[2]) * t);
+                    return `rgb(${r}, ${g}, ${bl})`;
+                }
+            }
+            return 'rgb(120, 120, 120)';
+        }
+
+        function buildTooltipHTML(props) {
+            const rows = Object.entries(props.criteria).map(([k, v]) => `
+                <tr>
+                    <td>${CRITERIA_LABELS[k] || k}</td>
+                    <td class="score">${v.toFixed(1)} / 10</td>
+                </tr>
+            `).join('');
+            return `
+                <div class="district-tooltip">
+                    <div class="name">${props.name}</div>
+                    <div class="total">Общий балл: <b>${props.total_score.toFixed(1)}</b> / 100</div>
+                    <table>${rows}</table>
+                </div>
+            `;
+        }
+
+        async function loadCity(cityId) {
+            showStatus('Загрузка...');
+            try {
+                const resp = await fetch(`/api/districts/${cityId}`);
+                if (!resp.ok) {
+                    showStatus('Не удалось загрузить районы');
+                    return;
+                }
+                const geojson = await resp.json();
+
+                if (currentLayer) map.removeLayer(currentLayer);
+
+                currentLayer = L.geoJSON(geojson, {
+                    style: feature => ({
+                        fillColor: scoreColor(feature.properties.total_score),
+                        weight: 1.5,
+                        opacity: 1,
+                        color: '#374151',
+                        fillOpacity: 0.65
+                    }),
+                    onEachFeature: (feature, layer) => {
+                        layer.bindTooltip(buildTooltipHTML(feature.properties), {
+                            sticky: true,
+                            direction: 'auto',
+                            className: 'district-tooltip-wrap'
+                        });
+                        layer.on('mouseover', e => {
+                            e.target.setStyle({ weight: 3, color: '#0f172a', fillOpacity: 0.8 });
+                            e.target.bringToFront();
+                        });
+                        layer.on('mouseout', e => currentLayer.resetStyle(e.target));
+                    }
+                }).addTo(map);
+
+                const view = CITY_VIEWS[cityId];
+                if (view) {
+                    map.setView(view.center, view.zoom);
+                } else {
+                    map.fitBounds(currentLayer.getBounds(), { padding: [20, 20] });
+                }
+                hideStatus();
+            } catch (err) {
+                console.error(err);
+                showStatus('Ошибка сети');
             }
         }
+
+        async function init() {
+            const select = document.getElementById('city-select');
+            try {
+                const resp = await fetch('/api/cities');
+                const cities = await resp.json();
+                if (!cities.length) {
+                    showStatus('Нет данных о городах');
+                    return;
+                }
+                cities.forEach(c => {
+                    const opt = document.createElement('option');
+                    opt.value = c.id;
+                    opt.textContent = c.label;
+                    select.appendChild(opt);
+                });
+                select.addEventListener('change', e => loadCity(e.target.value));
+                loadCity(cities[0].id);
+            } catch (err) {
+                showStatus('Не удалось получить список городов');
+            }
+        }
+
+        init();
     </script>
 </body>
 </html>

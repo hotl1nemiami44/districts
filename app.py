@@ -2,7 +2,12 @@ from flask import Flask, jsonify, render_template
 from database.config import Config
 from database.models import db, District
 from core.parser import fetch_and_save_mock_data
-import logging
+
+
+CITY_LABELS = {
+    "Moscow": "Москва",
+    "Saint-Petersburg": "Санкт-Петербург",
+}
 
 
 def create_app():
@@ -12,8 +17,6 @@ def create_app():
 
     with app.app_context():
         db.create_all()
-        # Добавляем принудительный вывод в консоль
-        print("Проверка базы данных...")
         fetch_and_save_mock_data(app)
 
     return app
@@ -27,26 +30,28 @@ def index():
     return render_template('index.html')
 
 
-# НОВЫЙ ДИАГНОСТИЧЕСКИЙ РОУТ
-@app.route('/api/test-all')
-def test_all():
-    """Показывает все записи в базе, чтобы проверить, не пуста ли она"""
-    all_districts = District.query.all()
-    print(f"Запрос к БД: найдено {len(all_districts)} районов")
-    return jsonify([d.to_dict() for d in all_districts])
+@app.route('/api/cities', methods=['GET'])
+def get_cities():
+    rows = db.session.query(District.city).distinct().all()
+    cities = [
+        {"id": c[0], "label": CITY_LABELS.get(c[0], c[0])}
+        for c in rows
+    ]
+    return jsonify(cities)
 
 
 @app.route('/api/districts/<city>', methods=['GET'])
 def get_districts(city):
-    # Убедись, что город в базе и в запросе совпадает по регистру
-    search_city = city.strip().capitalize()
-    districts = District.query.filter_by(city=search_city).all()
-
+    districts = District.query.filter_by(city=city).all()
     if not districts:
-        return jsonify(
-            {"message": f"В городе {search_city} районов не найдено", "db_count": District.query.count()}), 404
+        return jsonify({"message": f"В городе {city} районов не найдено"}), 404
 
-    return jsonify([d.to_dict() for d in districts])
+    features = [d.to_geojson_feature() for d in districts]
+    return jsonify({
+        "type": "FeatureCollection",
+        "city": city,
+        "features": features,
+    })
 
 
 if __name__ == '__main__':

@@ -1,7 +1,3 @@
-# core/analyzer.py
-import numpy as np
-
-
 def calculate_rating(criteria_data: dict) -> float:
     # 1. Веса (определенные в результате анализа)
     weights = {
